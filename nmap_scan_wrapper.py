@@ -103,10 +103,13 @@ def resolve_and_dedup(input_file):
     unique_ips.sort(key=lambda x: tuple(int(o) for o in x.split(".") if o.isdigit()))
 
     # Stats
-    total_hostnames = sum(len(v) for v in ip_to_hostnames.values())
-    saved = total - len(unique_ips)
-    print(f"[+] {total} targets -> {len(unique_ips)} unique IPs "
-          f"(saved {saved} duplicate scan{'s' if saved != 1 else ''})")
+    dedup_ips = sum(1 for v in ip_to_hostnames.values() if len(v) > 1)
+    total_duped_hostnames = sum(len(v) for v in ip_to_hostnames.values() if len(v) > 1)
+    saved = total_duped_hostnames - dedup_ips
+    print(f"[+] {total} targets -> {len(unique_ips)} unique IPs", end="")
+    if saved > 0:
+        print(f" (deduplicated {saved} redundant scan{'s' if saved != 1 else ''})", end="")
+    print()
     if unresolved:
         print(f"[!] {len(unresolved)} hostname(s) could not be resolved")
 
