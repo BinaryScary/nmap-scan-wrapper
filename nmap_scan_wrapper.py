@@ -299,12 +299,18 @@ def augment_xml_with_hostnames(xml_file, ip_to_hostnames, unresolved, is_smap=Fa
         print(f"[!] XML file not found, skipping augmentation: {xml_file}")
         return
 
-    # Read original XML as text to preserve formatting for nmap files
+    # Read and sanitize XML — smap doesn't escape "--" in comments like nmap does
+    import re
     with open(xml_path, "r", encoding="utf-8") as f:
-        original_xml = f.read()
+        xml_text = f.read()
+    xml_text = re.sub(
+        r'<!--(.*?)-->',
+        lambda m: '<!--' + m.group(1).replace('--', '-&#45;') + '-->',
+        xml_text,
+    )
 
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
+    root = ET.fromstring(xml_text)
+    tree = ET.ElementTree(root)
 
     matched_ips = set()
     added_count = 0
