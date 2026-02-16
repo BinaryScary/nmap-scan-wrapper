@@ -54,13 +54,39 @@ def load_config():
 # Target resolution & deduplication
 # ---------------------------------------------------------------------------
 
-def is_domain(s):
-    """Return True if s is a hostname (not an IP address)."""
+def classify_target(s):
+    """
+    Classify a target string.
+    Returns: 'ipv4', 'ipv6', 'network', 'hostname'
+    'network' covers CIDR (192.168.1.0/24, 2001:db8::/32) and
+    nmap-style ranges (192.168.1.1-100).
+    """
+    # CIDR notation
     try:
-        ipaddress.ip_address(s)
-        return False
+        ipaddress.ip_network(s, strict=False)
+        if "/" in s:
+            return "network"
+        # Single IP parsed as network — classify as IP
+        addr = ipaddress.ip_address(s)
+        return "ipv6" if addr.version == 6 else "ipv4"
     except ValueError:
-        return "." in s
+        pass
+
+    # Plain IP (handles IPv4 and IPv6)
+    try:
+        addr = ipaddress.ip_address(s)
+        return "ipv6" if addr.version == 6 else "ipv4"
+    except ValueError:
+        pass
+
+    # Nmap-style dash range (e.g. 192.168.1.1-100, 10.0.0-5.1-254)
+    if "-" in s and all(
+        part.replace("-", "").isdigit() for part in s.split(".")
+    ):
+        return "network"
+
+    # Must be a hostname
+    return "hostname"
 
 
 def resolve_and_dedup(input_file):
@@ -68,13 +94,13 @@ def resolve_and_dedup(input_file):
     Read targets file, resolve hostnames to IPs, deduplicate.
 
     Returns:
-        unique_ips: list of unique IP strings
+        unique_ips: list of unique IP/network strings for scanning
         ip_to_hostnames: dict mapping IP -> list of hostnames
         unresolved: list of hostnames that failed DNS resolution
     """
     ip_to_hostnames = {}
     unresolved = []
-    raw_ips = set()
+    raw_targets = set()  # IPs and network ranges (passed through as-is)
 
     with open(input_file) as f:
         targets = [line.strip() for line in f if line.strip() and not line.startswith("#")]
@@ -83,9 +109,12 @@ def resolve_and_dedup(input_file):
     print(f"[*] Resolving {total} targets...")
 
     for target in targets:
-        if is_domain(target):
+        kind = classify_target(target)
+
+        if kind == "hostname":
             try:
-                results = socket.getaddrinfo(target, None, socket.AF_INET)
+                # Resolve both A and AAAA records
+                results = socket.getaddrinfo(target, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
                 ips = list({r[4][0] for r in results})
                 for ip in ips:
                     ip_to_hostnames.setdefault(ip, [])
@@ -94,19 +123,36 @@ def resolve_and_dedup(input_file):
             except (socket.gaierror, socket.herror):
                 unresolved.append(target)
                 print(f"    [!] Could not resolve: {target}")
+        elif kind == "network":
+            # Pass network ranges through — nmap handles expansion
+            raw_targets.add(target)
         else:
-            # Raw IP — track it, no hostname association needed
-            raw_ips.add(target)
+            # Plain IPv4 or IPv6
+            raw_targets.add(target)
             ip_to_hostnames.setdefault(target, [])
 
-    unique_ips = list(raw_ips | set(ip_to_hostnames.keys()))
-    unique_ips.sort(key=lambda x: tuple(int(o) for o in x.split(".") if o.isdigit()))
+    unique_targets = list(raw_targets | set(ip_to_hostnames.keys()))
+
+    # Sort: IPv4 numerically, then networks, then IPv6
+    def sort_key(t):
+        try:
+            addr = ipaddress.ip_address(t)
+            return (0 if addr.version == 4 else 2, int(addr))
+        except ValueError:
+            pass
+        try:
+            net = ipaddress.ip_network(t, strict=False)
+            return (0 if net.version == 4 else 2, int(net.network_address))
+        except ValueError:
+            # Nmap dash range — sort by first octet values
+            return (1, t)
+    unique_targets.sort(key=sort_key)
 
     # Stats
     dedup_ips = sum(1 for v in ip_to_hostnames.values() if len(v) > 1)
     total_duped_hostnames = sum(len(v) for v in ip_to_hostnames.values() if len(v) > 1)
     saved = total_duped_hostnames - dedup_ips
-    print(f"[+] {total} targets -> {len(unique_ips)} unique IPs", end="")
+    print(f"[+] {total} targets -> {len(unique_targets)} unique targets", end="")
     if saved > 0:
         print(f" (deduplicated {saved} redundant scan{'s' if saved != 1 else ''})", end="")
     print()
@@ -119,7 +165,7 @@ def resolve_and_dedup(input_file):
             print(f"    {ip} <- {', '.join(hostnames[:5])}"
                   f"{'...' if len(hostnames) > 5 else ''} ({len(hostnames)} hostnames)")
 
-    return unique_ips, ip_to_hostnames, unresolved
+    return unique_targets, ip_to_hostnames, unresolved
 
 
 # ---------------------------------------------------------------------------
@@ -496,18 +542,18 @@ def main():
     config = load_config()
 
     # Resolve and deduplicate targets
-    unique_ips, ip_to_hostnames, unresolved = resolve_and_dedup(args.input_file)
+    unique_targets, ip_to_hostnames, unresolved = resolve_and_dedup(args.input_file)
 
-    if not unique_ips:
+    if not unique_targets:
         print("[!] No valid targets after resolution. Exiting.")
         sys.exit(1)
 
-    # Write deduplicated IPs to temp file
+    # Write deduplicated targets to temp file
     tmp_fd, tmp_ip_file = tempfile.mkstemp(prefix="nmap_dedup_", suffix=".txt")
     try:
         with os.fdopen(tmp_fd, "w") as f:
-            for ip in unique_ips:
-                f.write(ip + "\n")
+            for target in unique_targets:
+                f.write(target + "\n")
 
         # Run scans
         print(f"\n{'='*60}")
