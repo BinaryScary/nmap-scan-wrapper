@@ -1,0 +1,31 @@
+# Build output
+smap_bin
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Scan output files
+*.xml
+*.xml.bak
+*.gnmap
+*.nmap
+
+# Temp files
+nmap_dedup_*.txt
+
+# OS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Virtual environment
+venv/
+.venv/
