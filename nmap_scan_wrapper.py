@@ -113,8 +113,8 @@ def resolve_and_dedup(input_file):
 
         if kind == "hostname":
             try:
-                # Resolve both A and AAAA records
-                results = socket.getaddrinfo(target, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                # Resolve A records (IPv4 only for now)
+                results = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
                 ips = list({r[4][0] for r in results})
                 for ip in ips:
                     ip_to_hostnames.setdefault(ip, [])
