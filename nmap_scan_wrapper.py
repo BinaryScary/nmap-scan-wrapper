@@ -258,6 +258,7 @@ def run_with_pty(command):
         if interactive:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty)
             signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+        os.close(master_fd)
 
     _, status = os.waitpid(pid, 0)
     if os.WIFEXITED(status):
@@ -587,7 +588,10 @@ def main():
 
     for xml_file, is_smap in xml_files:
         if Path(xml_file).exists():
-            augment_xml_with_hostnames(xml_file, ip_to_hostnames, unresolved, is_smap=is_smap)
+            try:
+                augment_xml_with_hostnames(xml_file, ip_to_hostnames, unresolved, is_smap=is_smap)
+            except ET.ParseError as e:
+                print(f"[!] {xml_file}: failed to parse XML ({e}), skipping augmentation")
 
     print(f"\n[+] Scans completed.")
 
